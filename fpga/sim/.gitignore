@@ -1,0 +1,5 @@
+# gitignore for questa files
+*.mpf
+*.mti
+*.wlf
+work/**
