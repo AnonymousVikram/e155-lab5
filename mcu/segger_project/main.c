@@ -1,80 +1,58 @@
-/*********************************************************************
-*                    SEGGER Microcontroller GmbH                     *
-*                        The Embedded Experts                        *
-**********************************************************************
-
--------------------------- END-OF-HEADER -----------------------------
-
-File    : main.c
-Purpose : Generic application start
-
-*/
-
 #include "../lib/STM32L432KC.h"
-#include <cmsis_gcc.h>
-#include <core_cm4.h>
 #include <stdio.h>
-#include <stm32l432xx.h>
 #include <stm32l4xx.h>
 
-/*********************************************************************
- *
- *       main()
- *
- *  Function description
- *   Application entry point.
- */
+volatile uint32_t pulse_count = 0;
+volatile uint32_t elapsed_time_ms = 0;
+
+void EXTI9_5_IRQHandler(void) {
+  if (EXTI->PR1 & EXTI_PR1_PIF5) {
+    EXTI->PR1 = EXTI_PR1_PIF5; // Clear interrupt flag
+    pulse_count++;
+  }
+  if (EXTI->PR1 & EXTI_PR1_PIF6) {
+    EXTI->PR1 = EXTI_PR1_PIF6; // Clear interrupt flag
+    pulse_count++;
+  }
+}
+
+void SysTick_Handler(void) { elapsed_time_ms++; }
+
 int main(void) {
-  gpioEnable(GPIO_PORT_B);
   gpioEnable(GPIO_PORT_A);
 
-  // Set encoder1 as input (PA5)
-  // Set encoder2 as input (PA6)
+  // Set PA5 and PA6 as input with pull-up resistors
   pinMode(PA5, GPIO_INPUT);
   pinMode(PA6, GPIO_INPUT);
-
   GPIOA->PUPDR |= _VAL2FLD(GPIO_PUPDR_PUPD5, 0b01);
   GPIOA->PUPDR |= _VAL2FLD(GPIO_PUPDR_PUPD6, 0b01);
 
+  // Enable SYSCFG clock
   RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN;
 
-  SYSCFG->EXTICR[1] |= _VAL2FLD(SYSCFG_EXTICR2_EXTI5, 0b000);
-  SYSCFG->EXTICR[1] |= _VAL2FLD(SYSCFG_EXTICR2_EXTI6, 0b000);
+  // Configure EXTI for PA5 and PA6
+  SYSCFG->EXTICR[1] |= SYSCFG_EXTICR2_EXTI5_PA | SYSCFG_EXTICR2_EXTI6_PA;
+  EXTI->IMR1 |= EXTI_IMR1_IM5 | EXTI_IMR1_IM6; // Unmask the interrupts
 
-  __enable_irq();
+  // Enable both rising and falling edge triggers
+  EXTI->RTSR1 |= EXTI_RTSR1_RT5 | EXTI_RTSR1_RT6; // Rising edge trigger
+  EXTI->FTSR1 |= EXTI_FTSR1_FT5 | EXTI_FTSR1_FT6; // Falling edge trigger
 
-  // Initialize timer
-  RCC->APB1ENR1 |= RCC_APB1ENR1_TIM2EN;
-  initTIM(TIM2);
+  // Enable EXTI interrupt in NVIC
+  NVIC_EnableIRQ(EXTI9_5_IRQn);
 
-  EXTI->IMR1 |= (1 << gpioPinOffset(PA5));
-  EXTI->IMR1 |= (1 << gpioPinOffset(PA6));
-
-  EXTI->RTSR1 |= (1 << gpioPinOffset(PA5));
-  EXTI->RTSR1 |= (1 << gpioPinOffset(PA6));
-
-  EXTI->FTSR1 &= ~(1 << gpioPinOffset(PA5));
-  EXTI->FTSR1 &= ~(1 << gpioPinOffset(PA6));
-
-  NVIC->ISER[0] |= (1 << EXTI2_IRQn);
+  // Configure SysTick for 1 ms interrupts
+  SysTick_Config(SystemCoreClock / 1000);
 
   while (1) {
-    delay_millis(TIM2, 200);
+    // Calculate RPM every 1000 ms
+    if (elapsed_time_ms >= 1000) {
+      uint32_t pulses_per_revolution = 240; // Set according to your encoder
+      uint32_t rpm =
+          (pulse_count * 60000) / (pulses_per_revolution * elapsed_time_ms);
+      printf("RPM: %lu\n", rpm);
+      pulse_count = 0;
+      elapsed_time_ms = 0;
+    }
   }
 }
-
-void EXTI5_IRQHandler(void) {
-  if (EXTI->PR1 & (1 << 5)) {
-    EXTI->PR1 |= (1 << 5);
-    togglePin(PB3);
-  }
-}
-
-void EXTI6_IRQHandler(void) {
-  if (EXTI->PR1 & (1 << 6)) {
-    EXTI->PR1 |= (1 << 6);
-    togglePin(PB4);
-  }
-}
-
-/*************************** End of file ****************************/
